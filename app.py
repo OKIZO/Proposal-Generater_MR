@@ -3,11 +3,11 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 import re
 import json
-import os
 from io import BytesIO
 
 PLACEHOLDER_RE = re.compile(r"\{\{[^}]+\}\}")
 
+# --- PPTXの裏側処理 ---
 def _safe_get(d, *keys, default=""):
     cur = d
     for k in keys:
@@ -127,8 +127,8 @@ def replace_text_in_shape(shape, mapping):
         for child_shape in shape.shapes:
             replace_text_in_shape(child_shape, mapping)
 
-def replace_placeholders_in_pptx(template_file, data: dict) -> bytes:
-    prs = Presentation(template_file)
+def replace_placeholders_in_pptx(template_path: str, data: dict) -> bytes:
+    prs = Presentation(template_path)
     mapping = build_placeholder_map(data)
 
     for slide in prs.slides:
@@ -139,32 +139,31 @@ def replace_placeholders_in_pptx(template_file, data: dict) -> bytes:
     prs.save(bio)
     return bio.getvalue()
 
-# --- Streamlitの画面（UI）設定 ---
+
+# --- Streamlit UI（画面表示部分） ---
 def main():
-    st.title("企画書テンプレート自動生成アプリ")
-    st.write("JSONデータを入力して、PPTXテンプレートに自動記入します。")
+    st.set_page_config(page_title="企画書自動生成アプリ", layout="wide")
+    st.title("企画書自動生成アプリ")
 
-    # template.pptx が同じフォルダにあるか確認
-    template_path = "template.pptx"
-    template_file = None
+    # サイドバーやメイン画面に画像アップロードを配置（3つ）
+    st.subheader("1. 画像のアップロード")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        img_a = st.file_uploader("A案の画像", type=["jpg", "png", "jpeg"])
+    with col2:
+        img_b = st.file_uploader("B案の画像", type=["jpg", "png", "jpeg"])
+    with col3:
+        img_c = st.file_uploader("C案の画像", type=["jpg", "png", "jpeg"])
 
-    if os.path.exists(template_path):
-        st.info(f"デフォルトのテンプレート `{template_path}` を使用します。")
-        template_file = template_path
-    else:
-        st.warning("`template.pptx` が見つかりません。テンプレートファイルをアップロードしてください。")
-        template_file = st.file_uploader("PPTXテンプレートをアップロード", type=["pptx"])
-
+    st.subheader("2. JSONデータの入力")
     json_input = st.text_area("JSONデータを貼り付けてください", height=300)
 
-    if st.button("スライドを生成する"):
-        if not template_file:
-            st.error("テンプレートファイルがありません。")
-            return
+    # 実行ボタン
+    if st.button("企画書を生成する", type="primary"):
         if not json_input.strip():
             st.error("JSONデータが入力されていません。")
             return
-
+            
         try:
             data = json.loads(json_input)
         except json.JSONDecodeError:
@@ -173,8 +172,9 @@ def main():
 
         with st.spinner("PPTXを生成中..."):
             try:
-                output_pptx = replace_placeholders_in_pptx(template_file, data)
-                st.success("生成が完了しました！")
+                # 注：同じディレクトリに 'template.pptx' が存在している前提です
+                output_pptx = replace_placeholders_in_pptx("template.pptx", data)
+                st.success("テキストの置換が完了しました！")
                 
                 st.download_button(
                     label="📥 完成したPPTXをダウンロード",
