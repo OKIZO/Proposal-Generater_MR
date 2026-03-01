@@ -43,7 +43,7 @@ def build_placeholder_map(data: dict) -> dict:
         "{{target}}": str(basic.get("target", "")),
         "{{demo}}": "", 
         
-        # カラーコードのテキストは空文字にして消去（後で図形として描画するため）
+        # カラーコードのテキストは空文字にして消去
         "{{brandPrimary}}": "",
         "{{brandSecondary}}": "",
         
@@ -147,20 +147,39 @@ def replace_placeholders_in_pptx(template_path: str, data: dict, images: dict) -
     primary_hex = str(data.get("basic", {}).get("brand_primary", ""))
     secondary_hex = str(data.get("basic", {}).get("brand_secondary", ""))
     
-    color_shapes_to_add = [] # (slide, x, y, hex_color)
+    # 座標を格納するリスト (slide, X座標, Y座標, 色, PrimaryかSecondaryかのフラグ)
+    color_shapes_to_add = []
 
     # カラー用のプレースホルダーの位置を記録する関数
     def process_shape_for_colors(slide, shape):
+        # 1. 通常のテキストボックス等
         if getattr(shape, "has_text_frame", False):
             text = shape.text
             if "{{brandPrimary}}" in text and primary_hex:
-                # プレースホルダーがあるテキストボックスの位置を記録
-                color_shapes_to_add.append((slide, shape.left, shape.top, primary_hex))
+                color_shapes_to_add.append((slide, shape.left, shape.top, primary_hex, True))
             if "{{brandSecondary}}" in text and secondary_hex:
-                # primaryも同じボックス内にある場合は、被らないように右に少しずらす
-                offset = Pt(35) if "{{brandPrimary}}" in text else 0
-                color_shapes_to_add.append((slide, shape.left + offset, shape.top, secondary_hex))
+                color_shapes_to_add.append((slide, shape.left, shape.top, secondary_hex, False))
+
+        # 2. 表 (Table) の場合：セルごとの座標を計算して取得
+        if getattr(shape, "has_table", False):
+            table = shape.table
+            current_top = shape.top
+            for row in table.rows:
+                current_left = shape.left
+                for col_idx, cell in enumerate(row.cells):
+                    if getattr(cell, "text_frame", None):
+                        text = cell.text_frame.text
+                        if "{{brandPrimary}}" in text and primary_hex:
+                            # セルの左上から少し余白を持たせる(Pt(10)=右へ, Pt(5)=下へ)
+                            color_shapes_to_add.append((slide, current_left + Pt(10), current_top + Pt(5), primary_hex, True))
+                        if "{{brandSecondary}}" in text and secondary_hex:
+                            color_shapes_to_add.append((slide, current_left + Pt(10), current_top + Pt(5), secondary_hex, False))
+                    # 次のセルへX座標を進める
+                    current_left += table.columns[col_idx].width
+                # 次の行へY座標を進める
+                current_top += row.height
                 
+        # 3. グループ化図形
         if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
             for child in shape.shapes:
                 process_shape_for_colors(slide, child)
@@ -171,17 +190,29 @@ def replace_placeholders_in_pptx(template_path: str, data: dict, images: dict) -
             process_shape_for_colors(slide, shape)
             replace_text_in_shape(shape, mapping)
 
-    # 記録した座標にカラーの四角形（オブジェクト）を挿入
-    for slide, left, top, hex_color in color_shapes_to_add:
-        hex_color = hex_color.lstrip('#') # "#00bfff" から "#" を削除
+    # 記録した座標にカラーの長方形を挿入
+    for slide, base_left, base_top, hex_color, is_primary in color_shapes_to_add:
+        hex_color = hex_color.lstrip('#')
         if len(hex_color) == 6:
             try:
-                # HEX文字列をRGBに変換
+                # HEXをRGBに変換
                 r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-                size = Pt(25) # 四角形のサイズ（約8.8mm角）
+                
+                # モックアップに近い長方形サイズ
+                box_width = Pt(50)  # 横幅
+                box_height = Pt(15) # 縦幅
+                
+                # 2つ目のカラー(Secondary)の場合は右にずらして配置
+                offset_left = 0 if is_primary else box_width + Pt(10)
                 
                 # 図形を描画
-                new_shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, size, size)
+                new_shape = slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE, 
+                    base_left + offset_left, 
+                    base_top, 
+                    box_width, 
+                    box_height
+                )
                 new_shape.fill.solid()
                 new_shape.fill.fore_color.rgb = RGBColor(r, g, b)
                 new_shape.line.color.rgb = RGBColor(r, g, b) # 枠線も同色に
