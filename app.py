@@ -23,6 +23,17 @@ def _arr_get(a, idx, default=""):
         return a[idx]
     return default
 
+def get_unique_list(lists):
+    """複数のリストを結合し、順番を保ったまま重複を削除する"""
+    seen = set()
+    res = []
+    for lst in lists:
+        for item in lst:
+            if item and item not in seen:
+                seen.add(item)
+                res.append(item)
+    return res
+
 def build_placeholder_map(data: dict) -> dict:
     basic = data.get("basic", {})
     materials = data.get("materials", {})
@@ -33,6 +44,18 @@ def build_placeholder_map(data: dict) -> dict:
     branding = basic.get("branding", "")
     branding_label = "ブランデッド" if branding == "branded" else "アンブランデッド" if branding == "unbranded" else str(branding)
 
+    # 画面キャプチャのように、各所のタグを統合して重複を消す
+    merged_tones = get_unique_list([
+        _safe_get(md, "tone_manner", "keys", default=[]),
+        _safe_get(methods, "tone_tags", default=[]),
+        _safe_get(materials, "worldview_tags", default=[])
+    ])
+    
+    merged_motifs = get_unique_list([
+        _safe_get(md, "motif", "keys", default=[]),
+        _safe_get(materials, "motifs", default=[])
+    ])
+
     mapping = {
         "{{branding}}": branding_label,
         "{{itemName}}": str(basic.get("item_name", "")),
@@ -41,44 +64,40 @@ def build_placeholder_map(data: dict) -> dict:
         "{{spec}}": str(basic.get("item_spec", "")),
         "{{objective}}": str(basic.get("objective", "")),
         "{{target}}": str(basic.get("target", "")),
-        "{{demo}}": "", 
         
         # カラーコードのテキストは空文字にして消去
         "{{brandPrimary}}": "",
         "{{brandSecondary}}": "",
         
         "{{brandElement}}": str(basic.get("brand_elements", "")),
-        "{{creativeConcept}}": str(md.get("visual_concept", "")),
+        "{{brandFont}}": str(basic.get("brand_font", "")),
+        
+        "{{visualConcept}}": str(md.get("visual_concept", "")),
         "{{direction1}}": _arr_get(md.get("direction_short", []), 0, ""),
         "{{direction2}}": _arr_get(md.get("direction_short", []), 1, ""),
         "{{direction3}}": _arr_get(md.get("direction_short", []), 2, ""),
+        
         "{{focusCenter}}": str(target_info.get("focusCenter", "")),
         "{{treatmentPhase}}": str(target_info.get("infoPhase", "")),
-        "{{targetInsightLine1}}": str(_safe_get(md, "target_insight", "line1", default="")),
-        "{{targetInsightLine2}}": str(_safe_get(md, "target_insight", "line2", default="")),
-        "{{emotion1}}": _arr_get(_safe_get(md, "reasons", "emotion_keywords", default=[]), 0, ""),
-        "{{emotion2}}": _arr_get(_safe_get(md, "reasons", "emotion_keywords", default=[]), 1, ""),
-        "{{emotion3}}": _arr_get(_safe_get(md, "reasons", "emotion_keywords", default=[]), 2, ""),
-        "{{behavior1}}": _arr_get(_safe_get(md, "reasons", "behavior_keywords", default=[]), 0, ""),
-        "{{behavior2}}": _arr_get(_safe_get(md, "reasons", "behavior_keywords", default=[]), 1, ""),
-        "{{behavior3}}": _arr_get(_safe_get(md, "reasons", "behavior_keywords", default=[]), 2, ""),
-        "{{info1}}": _arr_get(_safe_get(md, "reasons", "info_need_type", default=[]), 0, ""),
-        "{{info2}}": _arr_get(_safe_get(md, "reasons", "info_need_type", default=[]), 1, ""),
-        "{{info3}}": _arr_get(_safe_get(md, "reasons", "info_need_type", default=[]), 2, ""),
-        "{{motif1}}": _arr_get(_safe_get(materials, "motifs", default=[]), 0, ""),
-        "{{motif2}}": _arr_get(_safe_get(materials, "motifs", default=[]), 1, ""),
-        "{{motif3}}": _arr_get(_safe_get(materials, "motifs", default=[]), 2, ""),
-        "{{world1}}": _arr_get(_safe_get(materials, "worldview_tags", default=[]), 0, ""),
-        "{{world2}}": _arr_get(_safe_get(materials, "worldview_tags", default=[]), 1, ""),
-        "{{world3}}": _arr_get(_safe_get(materials, "worldview_tags", default=[]), 2, ""),
-        "{{tone1}}": _arr_get(_safe_get(methods, "tone_tags", default=[]), 0, ""),
-        "{{tone2}}": _arr_get(_safe_get(methods, "tone_tags", default=[]), 1, ""),
-        "{{tone3}}": _arr_get(_safe_get(methods, "tone_tags", default=[]), 2, ""),
+        
+        "{{insight1}}": str(_safe_get(md, "target_insight", "line1", default="")),
+        "{{insight2}}": str(_safe_get(md, "target_insight", "line2", default="")),
+        
         "{{focusSummary}}": str(methods.get("focus_summary", "")),
-        "{{functional1}}": _arr_get(_safe_get(md, "functional_elements", default=[]), 0, ""),
-        "{{functional2}}": _arr_get(_safe_get(md, "functional_elements", default=[]), 1, ""),
-        "{{functional3}}": _arr_get(_safe_get(md, "functional_elements", default=[]), 2, ""),
+        "{{toneSummary}}": str(_safe_get(md, "tone_manner", "summary", default="")),
+        
+        "{{note1}}": _arr_get(md.get("notes", []), 0, ""),
+        "{{note2}}": _arr_get(md.get("notes", []), 1, ""),
     }
+
+    # トーンのタグ (t1〜t10)
+    for i in range(10):
+        mapping[f"{{{{t{i+1}}}}}"] = _arr_get(merged_tones, i, "")
+
+    # モチーフのタグ (m1〜m10)
+    for i in range(10):
+        mapping[f"{{{{m{i+1}}}}}"] = _arr_get(merged_motifs, i, "")
+
     return mapping
 
 def replace_text_in_paragraph(paragraph, mapping):
@@ -147,12 +166,9 @@ def replace_placeholders_in_pptx(template_path: str, data: dict, images: dict) -
     primary_hex = str(data.get("basic", {}).get("brand_primary", ""))
     secondary_hex = str(data.get("basic", {}).get("brand_secondary", ""))
     
-    # 座標を格納するリスト (slide, X座標, Y座標, 色, PrimaryかSecondaryかのフラグ)
     color_shapes_to_add = []
 
-    # カラー用のプレースホルダーの位置を記録する関数
     def process_shape_for_colors(slide, shape):
-        # 1. 通常のテキストボックス等
         if getattr(shape, "has_text_frame", False):
             text = shape.text
             if "{{brandPrimary}}" in text and primary_hex:
@@ -160,7 +176,6 @@ def replace_placeholders_in_pptx(template_path: str, data: dict, images: dict) -
             if "{{brandSecondary}}" in text and secondary_hex:
                 color_shapes_to_add.append((slide, shape.left, shape.top, secondary_hex, False))
 
-        # 2. 表 (Table) の場合：セルごとの座標を計算して取得
         if getattr(shape, "has_table", False):
             table = shape.table
             current_top = shape.top
@@ -170,42 +185,30 @@ def replace_placeholders_in_pptx(template_path: str, data: dict, images: dict) -
                     if getattr(cell, "text_frame", None):
                         text = cell.text_frame.text
                         if "{{brandPrimary}}" in text and primary_hex:
-                            # セルの左上から少し余白を持たせる(Pt(10)=右へ, Pt(5)=下へ)
                             color_shapes_to_add.append((slide, current_left + Pt(10), current_top + Pt(5), primary_hex, True))
                         if "{{brandSecondary}}" in text and secondary_hex:
                             color_shapes_to_add.append((slide, current_left + Pt(10), current_top + Pt(5), secondary_hex, False))
-                    # 次のセルへX座標を進める
                     current_left += table.columns[col_idx].width
-                # 次の行へY座標を進める
                 current_top += row.height
                 
-        # 3. グループ化図形
         if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
             for child in shape.shapes:
                 process_shape_for_colors(slide, child)
 
-    # 全スライドの置換処理と座標記録
     for slide in prs.slides:
         for shape in slide.shapes:
             process_shape_for_colors(slide, shape)
             replace_text_in_shape(shape, mapping)
 
-    # 記録した座標にカラーの長方形を挿入
     for slide, base_left, base_top, hex_color, is_primary in color_shapes_to_add:
         hex_color = hex_color.lstrip('#')
         if len(hex_color) == 6:
             try:
-                # HEXをRGBに変換
                 r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-                
-                # モックアップに近い長方形サイズ
-                box_width = Pt(50)  # 横幅
-                box_height = Pt(15) # 縦幅
-                
-                # 2つ目のカラー(Secondary)の場合は右にずらして配置
+                box_width = Pt(50) 
+                box_height = Pt(15) 
                 offset_left = 0 if is_primary else box_width + Pt(10)
                 
-                # 図形を描画
                 new_shape = slide.shapes.add_shape(
                     MSO_SHAPE.RECTANGLE, 
                     base_left + offset_left, 
@@ -215,11 +218,10 @@ def replace_placeholders_in_pptx(template_path: str, data: dict, images: dict) -
                 )
                 new_shape.fill.solid()
                 new_shape.fill.fore_color.rgb = RGBColor(r, g, b)
-                new_shape.line.color.rgb = RGBColor(r, g, b) # 枠線も同色に
+                new_shape.line.color.rgb = RGBColor(r, g, b)
             except ValueError:
                 pass
 
-    # 画像の貼り付け (スライド6=A案, スライド7=B案, スライド8=C案)
     insert_images_to_slide(prs, 5, images.get("A", []))
     insert_images_to_slide(prs, 6, images.get("B", []))
     insert_images_to_slide(prs, 7, images.get("C", []))
