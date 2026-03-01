@@ -44,7 +44,6 @@ def build_placeholder_map(data: dict) -> dict:
     branding = basic.get("branding", "")
     branding_label = "ブランデッド" if branding == "branded" else "アンブランデッド" if branding == "unbranded" else str(branding)
 
-    # 画面キャプチャのように、各所のタグを統合して重複を消す
     merged_tones = get_unique_list([
         _safe_get(md, "tone_manner", "keys", default=[]),
         _safe_get(methods, "tone_tags", default=[]),
@@ -64,25 +63,24 @@ def build_placeholder_map(data: dict) -> dict:
         "{{spec}}": str(basic.get("item_spec", "")),
         "{{objective}}": str(basic.get("objective", "")),
         "{{target}}": str(basic.get("target", "")),
+        "{{demo}}": "", # 空欄にして消去
         
-        # カラーコードのテキストは空文字にして消去
         "{{brandPrimary}}": "",
         "{{brandSecondary}}": "",
-        
         "{{brandElement}}": str(basic.get("brand_elements", "")),
         "{{brandFont}}": str(basic.get("brand_font", "")),
         
-        "{{visualConcept}}": str(md.get("visual_concept", "")),
+        # テンプレートに合わせて元の名前に修正
+        "{{creativeConcept}}": str(md.get("visual_concept", "")),
+        "{{targetInsightLine1}}": str(_safe_get(md, "target_insight", "line1", default="")),
+        "{{targetInsightLine2}}": str(_safe_get(md, "target_insight", "line2", default="")),
+        
         "{{direction1}}": _arr_get(md.get("direction_short", []), 0, ""),
         "{{direction2}}": _arr_get(md.get("direction_short", []), 1, ""),
         "{{direction3}}": _arr_get(md.get("direction_short", []), 2, ""),
         
         "{{focusCenter}}": str(target_info.get("focusCenter", "")),
         "{{treatmentPhase}}": str(target_info.get("infoPhase", "")),
-        
-        "{{insight1}}": str(_safe_get(md, "target_insight", "line1", default="")),
-        "{{insight2}}": str(_safe_get(md, "target_insight", "line2", default="")),
-        
         "{{focusSummary}}": str(methods.get("focus_summary", "")),
         "{{toneSummary}}": str(_safe_get(md, "tone_manner", "summary", default="")),
         
