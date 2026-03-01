@@ -1,6 +1,8 @@
 import streamlit as st
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.shapes import MSO_SHAPE_TYPE, MSO_SHAPE
+from pptx.dml.color import RGBColor
+from pptx.util import Pt
 import re
 import json
 from io import BytesIO
@@ -27,7 +29,6 @@ def build_placeholder_map(data: dict) -> dict:
     methods = data.get("methods", {})
     md = data.get("md_result", {})
     target_info = data.get("target_info", {})
-    focus = data.get("focus", {})
 
     branding = basic.get("branding", "")
     branding_label = "ブランデッド" if branding == "branded" else "アンブランデッド" if branding == "unbranded" else str(branding)
@@ -41,8 +42,11 @@ def build_placeholder_map(data: dict) -> dict:
         "{{objective}}": str(basic.get("objective", "")),
         "{{target}}": str(basic.get("target", "")),
         "{{demo}}": "", 
-        "{{brandPrimary}}": str(basic.get("brand_primary", "")),
-        "{{brandSecondary}}": str(basic.get("brand_secondary", "")),
+        
+        # カラーコードのテキストは空文字にして消去（後で図形として描画するため）
+        "{{brandPrimary}}": "",
+        "{{brandSecondary}}": "",
+        
         "{{brandElement}}": str(basic.get("brand_elements", "")),
         "{{creativeConcept}}": str(md.get("visual_concept", "")),
         "{{direction1}}": _arr_get(md.get("direction_short", []), 0, ""),
@@ -107,33 +111,27 @@ def replace_text_in_shape(shape, mapping):
         for child_shape in shape.shapes:
             replace_text_in_shape(child_shape, mapping)
 
-# 画像をスライドに貼り付ける関数（最大6枚をグリッド配置）
 def insert_images_to_slide(prs, slide_index, image_files):
-    # スライドが存在しない、または画像がない場合はスキップ
     if not image_files or slide_index >= len(prs.slides):
         return
     
     slide = prs.slides[slide_index]
-    image_files = image_files[:6] # 強制的に最大6枚までに制限
+    image_files = image_files[:6]
     
-    # スライドのサイズ（EMU単位）を取得して配置位置を計算
     margin_x = prs.slide_width * 0.05
-    margin_top = prs.slide_height * 0.25 # 上部のタイトルエリアを開ける
+    margin_top = prs.slide_height * 0.25 
     usable_w = prs.slide_width - (margin_x * 2)
     usable_h = prs.slide_height - margin_top - (prs.slide_height * 0.05)
     
-    col_w = usable_w / 3 # 3列
-    row_h = usable_h / 2 # 2段
+    col_w = usable_w / 3 
+    row_h = usable_h / 2 
     
     for idx, img_file in enumerate(image_files):
-        c = idx % 3  # 列番号 (0, 1, 2)
-        r = idx // 3 # 行番号 (0, 1)
+        c = idx % 3  
+        r = idx // 3 
         
-        # 各画像の左上座標を計算
         cell_x = int(margin_x + c * col_w)
         cell_y = int(margin_top + r * row_h)
-        
-        # セルの幅の90%を画像の幅に設定（少し余白をもたせる）
         img_width = int(col_w * 0.9)
         
         try:
@@ -146,15 +144,54 @@ def replace_placeholders_in_pptx(template_path: str, data: dict, images: dict) -
     prs = Presentation(template_path)
     mapping = build_placeholder_map(data)
 
-    # 1. テキストの置換
+    primary_hex = str(data.get("basic", {}).get("brand_primary", ""))
+    secondary_hex = str(data.get("basic", {}).get("brand_secondary", ""))
+    
+    color_shapes_to_add = [] # (slide, x, y, hex_color)
+
+    # カラー用のプレースホルダーの位置を記録する関数
+    def process_shape_for_colors(slide, shape):
+        if getattr(shape, "has_text_frame", False):
+            text = shape.text
+            if "{{brandPrimary}}" in text and primary_hex:
+                # プレースホルダーがあるテキストボックスの位置を記録
+                color_shapes_to_add.append((slide, shape.left, shape.top, primary_hex))
+            if "{{brandSecondary}}" in text and secondary_hex:
+                # primaryも同じボックス内にある場合は、被らないように右に少しずらす
+                offset = Pt(35) if "{{brandPrimary}}" in text else 0
+                color_shapes_to_add.append((slide, shape.left + offset, shape.top, secondary_hex))
+                
+        if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+            for child in shape.shapes:
+                process_shape_for_colors(slide, child)
+
+    # 全スライドの置換処理と座標記録
     for slide in prs.slides:
         for shape in slide.shapes:
+            process_shape_for_colors(slide, shape)
             replace_text_in_shape(shape, mapping)
 
-    # 2. 画像の貼り付け (スライド番号は 0から始まるため、スライド6 = index5)
-    insert_images_to_slide(prs, 5, images.get("A", [])) # スライド6へA案
-    insert_images_to_slide(prs, 6, images.get("B", [])) # スライド7へB案
-    insert_images_to_slide(prs, 7, images.get("C", [])) # スライド8へC案
+    # 記録した座標にカラーの四角形（オブジェクト）を挿入
+    for slide, left, top, hex_color in color_shapes_to_add:
+        hex_color = hex_color.lstrip('#') # "#00bfff" から "#" を削除
+        if len(hex_color) == 6:
+            try:
+                # HEX文字列をRGBに変換
+                r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+                size = Pt(25) # 四角形のサイズ（約8.8mm角）
+                
+                # 図形を描画
+                new_shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, size, size)
+                new_shape.fill.solid()
+                new_shape.fill.fore_color.rgb = RGBColor(r, g, b)
+                new_shape.line.color.rgb = RGBColor(r, g, b) # 枠線も同色に
+            except ValueError:
+                pass
+
+    # 画像の貼り付け (スライド6=A案, スライド7=B案, スライド8=C案)
+    insert_images_to_slide(prs, 5, images.get("A", []))
+    insert_images_to_slide(prs, 6, images.get("B", []))
+    insert_images_to_slide(prs, 7, images.get("C", []))
 
     bio = BytesIO()
     prs.save(bio)
@@ -169,7 +206,6 @@ def main():
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        # accept_multiple_files=True で複数選択・ドラッグ可能に
         img_a_list = st.file_uploader("A案の画像", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
         if len(img_a_list) > 6:
             st.warning("A案の画像が6枚を超えています。最初の6枚のみが使用されます。")
@@ -198,7 +234,6 @@ def main():
             st.error("JSONの形式が正しくありません。")
             return
 
-        # アップロードされた画像をまとめる辞書
         images_dict = {
             "A": img_a_list,
             "B": img_b_list,
@@ -207,9 +242,8 @@ def main():
 
         with st.spinner("PPTXを生成中..."):
             try:
-                # template.pptx が同じフォルダにある前提
                 output_pptx = replace_placeholders_in_pptx("template.pptx", data, images_dict)
-                st.success("テキストの置換と画像の挿入が完了しました！")
+                st.success("テキストの置換、カラー図形の配置、画像の挿入が完了しました！")
                 
                 st.download_button(
                     label="📥 完成したPPTXをダウンロード",
