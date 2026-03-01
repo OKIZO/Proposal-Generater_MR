@@ -1,4 +1,5 @@
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 import re
 import json
 from io import BytesIO
@@ -19,7 +20,6 @@ def _arr_get(a, idx, default=""):
     return default
 
 def build_placeholder_map(data: dict) -> dict:
-    # JSON構造はあなたの最新出力に合わせて調整してください（最低限はこれで埋まる）
     basic = data.get("basic", {})
     materials = data.get("materials", {})
     methods = data.get("methods", {})
@@ -32,13 +32,10 @@ def build_placeholder_map(data: dict) -> dict:
     tones = _safe_get(methods, "tone_tags", default=[])
     functional = _safe_get(md, "functional_elements", default=[])
 
-    # ターゲットインサイト2行（MDで生成したものがJSONに入る想定。無ければ空）
-    # 例：md_result.target_insight_lines = ["...", "..."]
     insight_lines = _safe_get(md, "target_insight_lines", default=[])
     if not isinstance(insight_lines, list):
         insight_lines = []
 
-    # 文字列化
     branding = basic.get("branding", "")
     if branding == "branded":
         branding_label = "ブランデッド"
@@ -50,6 +47,15 @@ def build_placeholder_map(data: dict) -> dict:
     mapping = {
         "{{branding}}": branding_label,
         "{{itemName}}": str(basic.get("item_name", "")),
+        
+        # --- 不足していた変数を追加 ---
+        "{{productName}}": str(basic.get("product_name", "")),
+        "{{diseaseName}}": str(basic.get("disease_name", "")),
+        "{{spec}}": str(basic.get("spec", "")),
+        "{{objective}}": str(basic.get("objective", "")),
+        "{{target}}": str(basic.get("target", "")),
+        "{{demo}}": str(basic.get("demo", "")),
+        # ------------------------------
 
         "{{brandPrimary}}": str(basic.get("brand_primary", "")),
         "{{brandSecondary}}": str(basic.get("brand_secondary", "")),
@@ -99,24 +105,42 @@ def build_placeholder_map(data: dict) -> dict:
 
     return mapping
 
+def replace_text_in_shape(shape, mapping):
+    """図形、グループ化された図形、表の中のテキストを再帰的に置換する関数"""
+    if shape.has_text_frame:
+        for p in shape.text_frame.paragraphs:
+            if not p.text or "{{" not in p.text:
+                continue
+            new_text = p.text
+            for k, v in mapping.items():
+                new_text = new_text.replace(k, str(v))
+            if new_text != p.text:
+                p.text = new_text
+
+    elif shape.has_table:
+        for row in shape.table.rows:
+            for cell in row.cells:
+                if cell.text_frame:
+                    for p in cell.text_frame.paragraphs:
+                        if not p.text or "{{" not in p.text:
+                            continue
+                        new_text = p.text
+                        for k, v in mapping.items():
+                            new_text = new_text.replace(k, str(v))
+                        if new_text != p.text:
+                            p.text = new_text
+
+    elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+        for child_shape in shape.shapes:
+            replace_text_in_shape(child_shape, mapping)
+
 def replace_placeholders_in_pptx(template_path: str, data: dict) -> bytes:
     prs = Presentation(template_path)
     mapping = build_placeholder_map(data)
 
     for slide in prs.slides:
         for shape in slide.shapes:
-            if not shape.has_text_frame:
-                continue
-            tf = shape.text_frame
-            # paragraph.text を書き換えるとrunが潰れるが、テンプレ運用なら許容しやすい
-            for p in tf.paragraphs:
-                original = p.text
-                if not original or "{{" not in original:
-                    continue
-                new_text = original
-                for k, v in mapping.items():
-                    new_text = new_text.replace(k, str(v))
-                p.text = new_text
+            replace_text_in_shape(shape, mapping)
 
     bio = BytesIO()
     prs.save(bio)
